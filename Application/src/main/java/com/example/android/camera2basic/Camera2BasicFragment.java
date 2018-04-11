@@ -18,16 +18,11 @@ package com.example.android.camera2basic;
 
 import android.Manifest;
 import android.Manifest.permission;
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.Dialog;
-import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.DialogFragment;
 import android.support.v4.app.Fragment;
 import android.util.Log;
 import android.view.LayoutInflater;
