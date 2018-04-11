@@ -43,7 +43,6 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
-
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -60,13 +59,7 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -228,11 +221,6 @@ public class Camera2BasicFragment extends Fragment
     private ImageReader mImageReader;
 
     /**
-     * This is the output file for our picture.
-     */
-    private File mFile;
-
-    /**
      * This a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
      * still image is ready to be saved.
      */
@@ -268,7 +256,7 @@ public class Camera2BasicFragment extends Fragment
                 options.inMutable = true;
                 mBitmap = BitmapFactory.decodeByteArray(resultRGB, 0, resultRGB.length, options);
 
-                mBackgroundHandler.post(new SendImageData(mBitmap));
+                mBackgroundHandler.post(new ProcessImageData(mBitmap));
                 test.close();
             }
 
@@ -312,10 +300,6 @@ public class Camera2BasicFragment extends Fragment
 
     private Bitmap mBitmap;
     private int width_ima, height_ima;
-
-    public Bitmap getBitmap() {
-        return mBitmap;
-    }
 
     /**
      * A {@link CameraCaptureSession.CaptureCallback} that handles events related to JPEG capture.
@@ -451,13 +435,12 @@ public class Camera2BasicFragment extends Fragment
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         view.findViewById(R.id.picture).setOnClickListener(this);
         view.findViewById(R.id.info).setOnClickListener(this);
-        mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
+        mTextureView = view.findViewById(R.id.texture);
     }
 
     @Override
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
-        mFile = new File(getActivity().getExternalFilesDir(null), "pic.jpg");
     }
 
     @Override
@@ -792,73 +775,6 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
-    /**
-     * Capture a still picture. This method should be called when we get a response in
-     * {@link #mCaptureCallback} from both {@link #lockFocus()}.
-     */
-    private void captureStillPicture() {
-        try {
-            final Activity activity = getActivity();
-            if (null == activity || null == mCameraDevice) {
-                return;
-            }
-            // This is the CaptureRequest.Builder that we use to take a picture.
-            final CaptureRequest.Builder captureBuilder =
-                    mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
-            captureBuilder.addTarget(mImageReader.getSurface());
-
-            // Use the same AE and AF modes as the preview.
-            captureBuilder.set(CaptureRequest.CONTROL_AF_MODE,
-                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-            captureBuilder.set(CaptureRequest.CONTROL_AE_MODE,
-                    CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
-
-            // Orientation
-            int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
-            captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, ORIENTATIONS.get(rotation));
-
-            CameraCaptureSession.CaptureCallback CaptureCallback
-                    = new CameraCaptureSession.CaptureCallback() {
-
-                @Override
-                public void onCaptureCompleted(@NonNull CameraCaptureSession session,
-                                               @NonNull CaptureRequest request,
-                                               @NonNull TotalCaptureResult result) {
-                    showToast("Saved: " + mFile);
-                    Log.d(TAG, mFile.toString());
-                    unlockFocus();
-                }
-            };
-
-            mCaptureSession.stopRepeating();
-            mCaptureSession.capture(captureBuilder.build(), CaptureCallback, null);
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * Unlock the focus. This method should be called when still image capture sequence is
-     * finished.
-     */
-    private void unlockFocus() {
-        try {
-            // Reset the auto-focus trigger
-            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
-                    CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
-            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE,
-                    CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
-            mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
-                    mBackgroundHandler);
-            // After this, the camera will go back to the normal state of preview.
-            mState = STATE_PREVIEW;
-            mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback,
-                    mBackgroundHandler);
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
-        }
-    }
-
     @Override
     public void onClick(View view) {
         switch (view.getId()) {
@@ -879,100 +795,24 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
-    private static class SendImageData implements Runnable {
+    private static class ProcessImageData implements Runnable {
 
         private Bitmap mBitmap;
-        private InetAddress serverAddr;
-        private DatagramSocket socket;
 
-        public SendImageData(Bitmap bitmap) {
+        public ProcessImageData(Bitmap bitmap) {
             mBitmap = bitmap;
         }
 
         @Override
         public void run() {
-
-            try {
-
-                if (serverAddr == null) {
-                    serverAddr = InetAddress.getByName("192.168.178.29");
-                }
-                if (socket == null) {
-                    socket = new DatagramSocket();
-                }
-
-                Matrix matrix = new Matrix();
-                matrix.postRotate(90);
-                Bitmap rotated = Bitmap.createBitmap(mBitmap, 0, 0,
-                        mBitmap.getWidth(), mBitmap.getHeight(),
-                        matrix, true);
-
-                int size_p = 0, i;
-                ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-                rotated.compress(Bitmap.CompressFormat.JPEG, 50, byteStream);
-
-                byte data[] = byteStream.toByteArray();
-                Log.e(TAG, "SIZE: " + data.length);
-
-                try {
-                    size_p = data.length;
-                    DatagramPacket packet = new DatagramPacket(data, size_p, serverAddr, 7788);
-                    socket.send(packet);
-                    mBitmap.recycle();
-                } catch (Exception e) {
-                    System.out.println(e.toString());
-                }
-            } catch (Exception e) {
-                System.out.println(e.toString());
-
-            }
+            Matrix matrix = new Matrix();
+            matrix.postRotate(90);
+            Bitmap rotated = Bitmap.createBitmap(mBitmap, 0, 0,
+                    mBitmap.getWidth(), mBitmap.getHeight(),
+                    matrix, true);
+            Log.d("Bitmap size", Integer.toString(rotated.getByteCount()));
 
         }
-    }
-
-
-    /**
-     * Saves a JPEG {@link Image} into the specified {@link File}.
-     */
-    private static class ImageSaver implements Runnable {
-
-        /**
-         * The JPEG image
-         */
-        private final Image mImage;
-        /**
-         * The file we save the image into.
-         */
-        private final File mFile;
-
-        public ImageSaver(Image image, File file) {
-            mImage = image;
-            mFile = file;
-        }
-
-        @Override
-        public void run() {
-            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.get(bytes);
-            FileOutputStream output = null;
-            try {
-                output = new FileOutputStream(mFile);
-                output.write(bytes);
-            } catch (IOException e) {
-                e.printStackTrace();
-            } finally {
-                mImage.close();
-                if (null != output) {
-                    try {
-                        output.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-
     }
 
     /**
